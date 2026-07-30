@@ -39,6 +39,49 @@ _ROBOT_JOINT_NAMES_DEFAULT = {
         "right_wrist_pitch_joint",
         "right_wrist_yaw_joint",
     ],
+    # CORRECTED: this must match the *retargeting MJCF's native joint order*
+    # (models/r1/r1_26dof.xml, i.e. mujoco.MjModel joint declaration order), NOT holosoma's
+    # training-side dof_names order. Proof: for g1, _ROBOT_JOINT_NAMES_DEFAULT["g1"] above is
+    # byte-for-byte identical to models/g1/g1_29dof.xml's native mujoco joint order (verified),
+    # which is what makes convert_data_format_mj.py's `dof_index_list` a no-op identity permutation
+    # for g1. The previous version of this list used holosoma's IsaacLab dof_names order instead
+    # (config_values/robot.py's r1_26dof, itself a *probed* PhysX order, unrelated to file
+    # declaration order) which is a *different* permutation than the MJCF's native order for r1.
+    # That mismatch made `motion_dof_pos[:, dof_index_list]` in convert_data_format_mj.py
+    # scramble already-correct retargeted qpos into the wrong slots before replay/save --
+    # this is what produced the visibly wrong joint targets in the MuJoCo viewer.
+    # (holosoma's IsaacLab side is unaffected: it resolves joints by name via
+    # `Articulation.find_joints(..., preserve_order=True)` and the WBT motion loader
+    # remaps the saved npz by its own `joint_names` field, so dof_names order there is
+    # arbitrary-but-consistent and does not need to match this list.)
+    "r1": [
+        "left_hip_pitch_joint",
+        "left_hip_roll_joint",
+        "left_hip_yaw_joint",
+        "left_knee_joint",
+        "left_ankle_pitch_joint",
+        "left_ankle_roll_joint",
+        "right_hip_pitch_joint",
+        "right_hip_roll_joint",
+        "right_hip_yaw_joint",
+        "right_knee_joint",
+        "right_ankle_pitch_joint",
+        "right_ankle_roll_joint",
+        "waist_roll_joint",
+        "waist_yaw_joint",
+        "left_shoulder_pitch_joint",
+        "left_shoulder_roll_joint",
+        "left_shoulder_yaw_joint",
+        "left_elbow_joint",
+        "left_wrist_roll_joint",
+        "right_shoulder_pitch_joint",
+        "right_shoulder_roll_joint",
+        "right_shoulder_yaw_joint",
+        "right_elbow_joint",
+        "right_wrist_roll_joint",
+        "head_pitch_joint",
+        "head_yaw_joint",
+    ],
 }
 
 

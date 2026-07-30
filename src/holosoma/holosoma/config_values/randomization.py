@@ -4,6 +4,7 @@ from holosoma.config_types.randomization import RandomizationManagerCfg
 from holosoma.config_values.loco.g1.randomization import g1_29dof_randomization
 from holosoma.config_values.loco.t1.randomization import t1_29dof_randomization
 from holosoma.config_values.wbt.g1.randomization import g1_29dof_wbt_randomization, g1_29dof_wbt_randomization_w_object
+from holosoma.config_values.wbt.r1.randomization import r1_26dof_wbt_randomization
 from holosoma.utils.config_registry import ConfigRegistry
 
 RANDOMIZATION_REGISTRY = ConfigRegistry(RandomizationManagerCfg, group="holosoma.config.randomization")
@@ -13,6 +14,7 @@ RANDOMIZATION_REGISTRY.add("t1_29dof", t1_29dof_randomization)
 RANDOMIZATION_REGISTRY.add("g1_29dof", g1_29dof_randomization)
 RANDOMIZATION_REGISTRY.add("g1_29dof_wbt", g1_29dof_wbt_randomization)
 RANDOMIZATION_REGISTRY.add("g1_29dof_wbt_w_object", g1_29dof_wbt_randomization_w_object)
+RANDOMIZATION_REGISTRY.add("r1_26dof_wbt", r1_26dof_wbt_randomization)
 
 from holosoma.utils.config_registry import (  # noqa: E402
     deprecated_defaults_alias as _deprecated_defaults_alias,

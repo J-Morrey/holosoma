@@ -41,3 +41,6 @@ wandb-metadata.json
 
 # BAZEL build artifacts
 BUILD.bazel
+
+custom_assets/
+.env

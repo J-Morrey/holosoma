@@ -1,0 +1,19 @@
+"""Whole Body Tracking curriculum presets for the R1 robot."""
+
+from holosoma.config_types.curriculum import CurriculumManagerCfg, CurriculumTermCfg
+
+r1_26dof_wbt_curriculum = CurriculumManagerCfg(
+    params={
+        "num_compute_average_epl": 1000,
+    },
+    setup_terms={
+        "average_episode_tracker": CurriculumTermCfg(
+            func="holosoma.managers.curriculum.terms.locomotion:AverageEpisodeLengthTracker",
+            params={},
+        ),
+    },
+    reset_terms={},
+    step_terms={},
+)
+
+__all__ = ["r1_26dof_wbt_curriculum"]

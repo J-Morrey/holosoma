@@ -192,6 +192,26 @@ JOINTS_MAPPINGS = {
         "LeftHand": "left_rubber_hand_link",
         "RightHand": "right_rubber_hand_link",
     },
+    ("lafan", "r1"): {
+        "Spine1": "waist_yaw_link",
+        "LeftUpLeg": "left_hip_pitch_link",
+        "RightUpLeg": "right_hip_pitch_link",
+        "LeftLeg": "left_knee_link",
+        "RightLeg": "right_knee_link",
+        "LeftArm": "left_shoulder_roll_link",
+        "RightArm": "right_shoulder_roll_link",
+        "LeftForeArm": "left_elbow_link",
+        "RightForeArm": "right_elbow_link",
+        "LeftFoot": "left_ankle_pitch_link",
+        "RightFoot": "right_ankle_pitch_link",
+        # Toe keypoint now targets the toe-tip contact sphere (matches G1's convention) rather
+        # than the ankle_roll_link body origin -- gives the optimizer a distinct forward/toe
+        # point separate from the ankle center, better constraining foot orientation.
+        "LeftToeBase": "left_ankle_roll_sphere_5_link",
+        "RightToeBase": "right_ankle_roll_sphere_5_link",
+        "LeftHand": "left_wrist_roll_link",
+        "RightHand": "right_wrist_roll_link",
+    },
     ("lafan", "t1"): {
         "Spine1": "Trunk",
         "LeftUpLeg": "Hip_Pitch_Left",
