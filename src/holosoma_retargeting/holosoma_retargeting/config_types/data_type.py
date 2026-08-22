@@ -148,6 +148,48 @@ MOCAP_DEMO_JOINTS = [
     "RightFootMod",
 ]
 
+# NVIDIA SOMA skeleton, body subset. The full SOMA rig exported to BVH has 78 joints:
+# a Root above Hips, 4 face joints (HeadEnd/Jaw/LeftEye/RightEye) and 40 finger joints.
+# We keep 22 body keypoints, deliberately mirroring LAFAN_DEMO_JOINTS' density so the
+# ("soma", <robot>) mappings parallel the ("lafan", <robot>) ones one-for-one.
+#
+# Dropped and why:
+#   * Root      -- pinned at the world origin in every BONES-SEED clip (all 6 channels
+#                  are zero; locomotion lives on Hips). A joint fixed at the origin would
+#                  badly distort the interaction-mesh Laplacian.
+#   * face      -- no corresponding robot targets.
+#   * fingers   -- the R1 and G1 mappings terminate at a single wrist link, so 40 finger
+#                  keypoints would add cost and skew the Laplacian without adding signal.
+#   * Neck2     -- second of two neck joints; keeping one matches LAFAN's single "Neck".
+#   * *ToeEnd   -- leaf tips beyond the toe-base contact point.
+#
+# Naming traps: SOMA's hip is "LeftLeg" (not "LeftUpLeg") and its knee is "LeftShin"
+# (not "LeftLeg"). The rig is Mixamo-flavored but not Mixamo-compatible.
+SOMA_DEMO_JOINTS = [
+    "Hips",
+    "Spine1",
+    "Spine2",
+    "Chest",
+    "Neck1",
+    "Head",
+    "LeftShoulder",
+    "LeftArm",
+    "LeftForeArm",
+    "LeftHand",
+    "RightShoulder",
+    "RightArm",
+    "RightForeArm",
+    "RightHand",
+    "LeftLeg",
+    "LeftShin",
+    "LeftFoot",
+    "LeftToeBase",
+    "RightLeg",
+    "RightShin",
+    "RightFoot",
+    "RightToeBase",
+]
+
 SMPLX_DEMO_JOINTS = [
     "Pelvis",
     "L_Hip",
@@ -228,6 +270,44 @@ JOINTS_MAPPINGS = {
         "RightToeBase": "right_foot_sphere_5_link",
         "LeftHand": "left_hand_sphere_link",
         "RightHand": "right_hand_sphere_link",
+    },
+    # SOMA -> R1 mirrors ("lafan", "r1") joint-for-joint, with SOMA's joint names
+    # substituted: LeftUpLeg -> LeftLeg (hip), LeftLeg -> LeftShin (knee).
+    ("soma", "r1"): {
+        "Spine1": "waist_yaw_link",
+        "LeftLeg": "left_hip_pitch_link",
+        "RightLeg": "right_hip_pitch_link",
+        "LeftShin": "left_knee_link",
+        "RightShin": "right_knee_link",
+        "LeftArm": "left_shoulder_roll_link",
+        "RightArm": "right_shoulder_roll_link",
+        "LeftForeArm": "left_elbow_link",
+        "RightForeArm": "right_elbow_link",
+        "LeftFoot": "left_ankle_pitch_link",
+        "RightFoot": "right_ankle_pitch_link",
+        "LeftToeBase": "left_ankle_roll_sphere_5_link",
+        "RightToeBase": "right_ankle_roll_sphere_5_link",
+        "LeftHand": "left_wrist_roll_link",
+        "RightHand": "right_wrist_roll_link",
+    },
+    # Provided so the same SOMA clip can be retargeted to G1 as a control, separating
+    # loader bugs from R1-vs-G1 embodiment limits. Mirrors ("lafan", "g1").
+    ("soma", "g1"): {
+        "Spine1": "pelvis_contour_link",
+        "LeftLeg": "left_hip_pitch_link",
+        "RightLeg": "right_hip_pitch_link",
+        "LeftShin": "left_knee_link",
+        "RightShin": "right_knee_link",
+        "LeftArm": "left_shoulder_roll_link",
+        "RightArm": "right_shoulder_roll_link",
+        "LeftForeArm": "left_elbow_link",
+        "RightForeArm": "right_elbow_link",
+        "LeftFoot": "left_ankle_intermediate_1_link",
+        "RightFoot": "right_ankle_intermediate_1_link",
+        "LeftToeBase": "left_ankle_roll_sphere_5_link",
+        "RightToeBase": "right_ankle_roll_sphere_5_link",
+        "LeftHand": "left_rubber_hand_link",
+        "RightHand": "right_rubber_hand_link",
     },
     ("smplh", "g1"): {
         "Pelvis": "pelvis_contour_link",
@@ -322,6 +402,7 @@ TOE_NAMES_BY_FORMAT = {
     "smplh": ["L_Toe", "R_Toe"],
     "mocap": ["LeftToeBase", "RightToeBase"],
     "smplx": ["L_Foot", "R_Foot"],
+    "soma": ["LeftToeBase", "RightToeBase"],
 }
 
 
@@ -348,6 +429,10 @@ DEMO_JOINTS_REGISTRY: dict[str, list[str]] = {
     "smplh": SMPLH_DEMO_JOINTS,
     "mocap": MOCAP_DEMO_JOINTS,
     "smplx": SMPLX_DEMO_JOINTS,
+    # Height is computed per-clip by data_utils/prep_soma_bvh_for_rt.py and read from the
+    # .npz, so "soma" needs no DATA_FORMAT_CONSTANTS entry; robot_retarget.py's generic
+    # .npz fallback handles loading.
+    "soma": SOMA_DEMO_JOINTS,
 }
 
 # Type alias for data formats - use str to allow dynamic data formats via DEMO_JOINTS_REGISTRY
