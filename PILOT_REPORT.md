@@ -1,7 +1,7 @@
 # SOMA → OmniRetarget → Unitree R1 pilot report
 
-**Date:** 2026-08-21
-**Branch:** `add_soma_format` (7 commits, off `add_R1`)
+**Date:** 2026-08-21 / 2026-08-22
+**Branch:** `add_soma_format` (off `add_R1`)
 **Scope:** add a `soma` motion format to the retargeting pipeline and pilot-retarget a
 stratified 10% sample of BONES-SEED to the Unitree R1.
 
@@ -14,10 +14,14 @@ standard of evidence, and conversion of the full 10% sample succeeded on **14,22
 clips with zero failures**. Retargeting itself has a **0% exception rate** across every clip
 attempted.
 
-There is **one real quality defect**: R1 drives its own hands into its hips in ~90% of
-clips, up to 7.6 cm deep. It is not a loader bug and it is not fixable with the obvious
-knob — enabling the self-collision constraint makes the QP *infeasible* even at a 5 mm
-margin. That needs a decision before a full run.
+There are **two real quality defects**:
+
+1. **R1 drives its own hands into its hips** in ~50% of clips, up to 7.6 cm deep. Not a
+   loader bug, and not fixable with the obvious knob — enabling the self-collision
+   constraint makes the QP *infeasible* even at a 5 mm margin.
+2. **Crouching motion is at or beyond R1's hip-roll range.** `crouching` clips average
+   13.0% joint-limit saturation with **53% exceeding a 10% flag threshold**, against 3.7%
+   and 2% for `standing`. This is the concrete filter list for a full run.
 
 The full 142K run projects to **~8–10 days** on this 24-core box. Not weeks, but not
 overnight either, and worth parallelising across machines.
@@ -51,11 +55,18 @@ below come from **two** runs:
   of 44 analysed clips were `Basic Locomotion Neutral`, 43 of 44 `standing`.
 - **A stratified 700-clip subset** (`pilot_soma_r1/stratified_subset_ids.txt`), a uniform
   draw from the already-stratified manifest, covering **351 performers, 19 categories and
-  all 10 hard-case buckets**. This is the representative set and the basis for §3.
+  all 10 hard-case buckets**. **~105 of these completed** and are the basis for §3 and §5
+  (the analysed join covers 92 clips across **82 performers**).
+
+**How much this mattered.** The biased prefix reported 2.7% mean joint saturation with
+*zero* clips over a 10% flag; the stratified set reports **6.1% mean, 19.6% p95, 15.2%
+flagged**, and surfaced crouching as a hard failure class plus two self-penetration modes
+(wrist↔wrist, wrist↔knee) that the biased set never showed. Had I reported the first
+numbers, the conclusion would have been confidently wrong.
 
 This is itself a finding: **`find_files()` sorts, so a partially completed run yields an
 alphabetical prefix.** Any interrupted full run gives biased partial results. Fix before
-the full run — see §6.
+the full run — see §8.
 
 ### Failure taxonomy
 
@@ -177,19 +188,26 @@ as contact. The official eval derives contact from the *human* motion's velocity
 right number. I flagged this caveat in the tool's docstring rather than quietly reporting
 the flattering number.
 
-**Joint-limit saturation — low, 2.7% mean / 5.1% p95.** No clip in the analysed set exceeded
-a 10% flag threshold. R1's 26 DoF are coping with this motion better than I expected. The
-joints that saturate most often are `ankle_roll` (walking/turning) and
-`right_shoulder_roll` (jumping).
+**Joint-limit saturation — 6.1% mean / 19.6% p95, and strongly category-dependent.**
+15.2% of clips exceed a 10% flag threshold. This is the metric where sampling mattered
+most: the alphabetically-biased set gave 2.7% / 5.1% with *nothing* flagged, which would
+have supported a confident and wrong "R1 handles everything fine". See §5.
 
-**Self-penetration — the real problem.** Hands into hips, in ~90% of clips:
+**Self-penetration — the other real problem.** Hands into hips, on the stratified set
+(n=92):
 
 | Body pair | Clips | Deepest |
 |---|---:|---:|
-| `right_hip_roll_link ↔ right_wrist_roll_link` | 18 | **−0.0762 m** |
-| `left_hip_roll_link ↔ left_wrist_roll_link` | 9 | −0.0704 m |
-| `right_hip_pitch_link ↔ right_wrist_roll_link` | 8 | −0.0613 m |
-| `left_hip_pitch_link ↔ left_wrist_roll_link` | 5 | −0.0617 m |
+| `right_hip_pitch_link ↔ right_wrist_roll_link` | 15 | −0.0572 m |
+| `right_hip_roll_link ↔ right_wrist_roll_link` | 13 | −0.0419 m |
+| `left_wrist_roll_link ↔ right_wrist_roll_link` | 8 | −0.0683 m |
+| `left_hip_roll_link ↔ left_wrist_roll_link` | 7 | **−0.0704 m** |
+| `left_hip_pitch_link ↔ left_wrist_roll_link` | 7 | −0.0490 m |
+| `right_knee_link ↔ left_wrist_roll_link` | 2 | **−0.0766 m** |
+
+Wrist↔hip dominates (42 of 92 clips), but the stratified set also exposes
+**wrist↔wrist** (hands passing through each other, 8 clips) and **wrist↔knee** (2 clips,
+the deepest single penetration at 7.7 cm) — neither of which appeared in the biased set.
 
 This is not caught during retargeting because `SelfCollisionConfig.enable` defaults to
 **`False`** with an empty `pairs` list, so no self-collision constraint is ever built.
@@ -269,25 +287,49 @@ has nothing to preserve against. **If interaction preservation is why you chose
 OmniRetarget, that value is not being realised on this dataset**, and it is worth deciding
 that deliberately rather than by default.
 
-### Categories at risk
+### Categories at risk — ranked, from the stratified set (n=92, 82 performers)
 
-With the honest caveat that no analysed clip exceeded a 10% joint-saturation flag, R1's
-26 DoF handle this corpus better than expected. Ranked concerns:
+| Group | n | joint sat | % over 10% flag | verdict |
+|---|---:|---:|---:|---|
+| `crouching` (body position) | 17 | **12.99%** | **53%** | **filter or re-tune** |
+| Advanced Locomotion (crouch-dominated) | 12 | **13.06%** | **50%** | **filter or re-tune** |
+| Sports (cartwheels) | 15 | 4.80% | 7% | mostly fine |
+| Object Manipulation | 13 | 4.25% | 8% | mostly fine |
+| Baseline | 24 | 4.27% | 0% | fine |
+| climbing | 15 | 4.22% | 0% | fine — surprisingly |
+| `standing` (body position) | 60 | 3.71% | 2% | fine |
 
-1. **Everything with arms at rest — the wrist/hip issue.** Not a category, which is what
-   makes it serious: it is not filterable. Affects ~90% of clips. Example IDs:
-   `Relaxed_throw_ball_003__A057` (−0.0762 m), `Relaxed_throw_ball_003__A057_M`
-   (−0.0704 m), `Relaxed_throw_ball_004__A057_M` (−0.0671 m).
-2. **Jumping** — highest joint saturation seen (`Jump_Right_001__A017`, 6.3%, saturating
-   `right_shoulder_roll_joint`). R1 has no wrist pitch/yaw, so arm counter-swing has
-   nowhere to go.
-3. **Walking and turning** — `ankle_roll` saturation ~5% (`Turn_Start_Walk_0315_001__A018`,
-   `Neutral_walk_forward_002__A057`, `Turn_Start_Walk_0225_002__A017`). Benign but the
-   most consistent saturator.
-4. **Untested at scale in this pilot:** `inverted`/handstand (10 clips in the stratified
-   subset), `stunts_martial` (13), `climbing` (15). These are the most likely to be
-   infeasible and the sample is too small to rank them. `Martial Arts` has only 20 clips
-   in the entire corpus and can be dropped without loss.
+**1. Crouching is the clear headline.** It saturates `left_hip_roll_joint` at 20–27%. R1
+cannot achieve the hip abduction that a crouched human gait requires. Concrete IDs:
+
+- `crouch_ff_loop_225_R_002__A246_M` — **27.2%**, `left_hip_roll_joint`
+- `crouch_ff_start_180_R_103__A125_M` — 21.2%, `left_hip_roll_joint`
+- `crouch_ff_loop_315_004__A146` — 20.4%, `left_hip_roll_joint`
+- `crouch_ff_loop_225_101__A125` — 19%
+- `crouch_cupboard_mid_out_R_002__A291_M` — 18%
+- `crouch_ff_start_360_001__A149` — 18%
+
+Filter suggestion for the full run: `content_body_position` containing `crouch` or
+`croach` (**both spellings**, 3,464 clips combined), plus the `crouch_ff_*` name prefix.
+
+**2. Other individual offenders worth knowing:**
+
+- `count_it_001__A492_M` — 21.3%, `right_knee_joint`
+- `balled_up_R_001__A428_M` — 20.0%, `right_shoulder_roll_joint`
+- `cartwheel_R_002__A416` — 12%, and cartwheels generally 7–12%
+- `big_heavy_one_hand_behind_high_to_behind_medium_R_001__A524` — 14%: reaching *behind*
+  the body at height is where R1's single wrist DoF and limited shoulder range bind
+
+**3. The wrist/hip penetration is not a category**, which is what makes it awkward: it
+affects ~50% of clips across all groups and cannot be filtered around. Example IDs:
+`Relaxed_throw_ball_003__A057` (−0.0762 m), `Relaxed_throw_ball_003__A057_M` (−0.0704 m).
+
+**4. Climbing is fine** (4.22%, nothing flagged) — I expected the opposite. `come_up_50cm_box_*`
+clips top out at 6%. Do not filter these.
+
+**5. Still under-sampled:** `inverted`/handstand and `stunts_martial` had too few completed
+clips to rank. They remain the most likely to be infeasible. `Martial Arts` has only 20
+clips corpus-wide and can be dropped without loss.
 
 **Concrete R1 DoF gaps vs G1.** R1 has 26 actuated joints against G1's 29. The missing
 capability that shows up in the data is the **wrist**: R1 exposes only
@@ -356,21 +398,28 @@ Cost is 2× the 30 fps figure (~16–20 days single-machine), which is the real 
    - Convert self-collision from a hard constraint to a soft penalty.
    - Accept it and filter, but at ~90% of clips that is not viable.
 
-2. **Make `find_files()` order deterministic-but-shuffled** (or add `--limit`/`--shard`).
-   As it stands an interrupted run yields an alphabetically biased prefix, which cost me a
-   full re-run to get representative statistics.
+2. **Decide what to do about crouching** (§5). Either exclude
+   `content_body_position` matching `crouch|croach` (~3,464 clips, 2.4% of the corpus), or
+   relax `left/right_hip_roll_joint` limits via `--robot-config.manual-lb/ub` if R1's real
+   hardware range is wider than the URDF claims. I did not change your robot config to test
+   the latter, per your instruction — but that is the first thing I would try, since
+   filtering loses a motion class you probably want.
+
+3. **Make `find_files()` order deterministic-but-shuffled** (or add `--limit`/`--shard`).
+   As it stands an interrupted run yields an alphabetically biased prefix. This cost me a
+   full re-run and, had I not caught it, would have produced a confidently wrong report.
 
 **Worth doing:**
 
-3. Switch to **60 fps** (§7).
-4. **Shard across machines** — 8–10 days on one box, ~2–3 days on four.
-5. Add a `--clip-list` option to `parallel_robot_retarget.py` so a curated subset does not
+4. Switch to **60 fps** (§7).
+5. **Shard across machines** — 8–10 days on one box, ~2–3 days on four.
+6. Add a `--clip-list` option to `parallel_robot_retarget.py` so a curated subset does not
    need a symlink directory.
-6. Consider whether OmniRetarget is the right tool for the free-space bulk (§5); a cheaper
+7. Consider whether OmniRetarget is the right tool for the free-space bulk (§5); a cheaper
    retargeter for the ~75% that is pure locomotion/gesture would cut the projection
    substantially, reserving OmniRetarget for interaction clips if object annotations ever
    land.
-7. `--retargeter.debug` should not require `--visualize`; one-line guard in
+8. `--retargeter.debug` should not require `--visualize`; one-line guard in
    `interaction_mesh_retargeter.retarget_motion`.
 
 ---

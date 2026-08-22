@@ -39,7 +39,15 @@ def main() -> None:
 
     m = pd.DataFrame(json.loads(Path(args.metrics).read_text()))
     meta = pd.read_csv(args.manifest)
+
+    # robot_retarget.py names outputs "<clip>_<aug>.npz", and robot_only uses the single
+    # augmentation "original". Strip that suffix so clip IDs join against the manifest.
+    m["clip_id"] = m.clip_id.str.replace(r"_original$", "", regex=True)
+
     df = m.merge(meta, left_on="clip_id", right_on="filename", how="inner")
+    unmatched = len(m) - len(df)
+    if unmatched:
+        print(f"note: {unmatched} metric row(s) had no manifest match and were dropped")
     if df.empty:
         raise SystemExit("no overlap between metrics and manifest")
 
