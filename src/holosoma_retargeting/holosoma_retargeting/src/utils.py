@@ -710,8 +710,22 @@ def extract_foot_sticking_sequence_velocity(smpl_joints, demo_joints, foot_names
     left_toe_velocity = np.concatenate([[velocity_threshold + 1], left_toe_velocity])
     right_toe_velocity = np.concatenate([[velocity_threshold + 1], right_toe_velocity])
 
+    # Key by the caller's own foot_names rather than the SMPLH literals "L_Toe"/"R_Toe".
+    # Keying by literals meant a caller passing e.g. ["LeftToeBase", "RightToeBase"] got
+    # back dicts it could not index by the names it supplied. The retargeter tolerated
+    # this because it resolves left/right by first letter, but two latent problems
+    # followed: downstream consumers that index by the supplied names (such as
+    # RetargetingEvaluator.detect_foot_sliding) raised KeyError, and robot_retarget.py's
+    # object_interaction branch, which does
+    # `foot_sticking_sequences[0][toe_names[0]] = False`, inserted a *second* left-side
+    # key instead of overwriting the existing one -- leaving the retargeter's first-letter
+    # scan to pick whichever happened to come last.
+    left_name, right_name = foot_names
     return [
-        {"L_Toe": left_toe_velocity[i] <= velocity_threshold, "R_Toe": right_toe_velocity[i] <= velocity_threshold}
+        {
+            left_name: left_toe_velocity[i] <= velocity_threshold,
+            right_name: right_toe_velocity[i] <= velocity_threshold,
+        }
         for i in range(len(smpl_joints))
     ]
 
