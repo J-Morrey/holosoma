@@ -67,8 +67,21 @@ SOMA_SOURCE_FPS = 120.0
 # (= Ry(90 deg) @ Rz(90 deg)).
 BVH_TO_WORLD = np.array([[0, 0, 1], [1, 0, 0], [0, 1, 0]], dtype=np.float64)
 
-# Chain from Hips to the top of the skull. Used for a pose-independent stature estimate.
-_STATURE_CHAIN = ["Spine1", "Spine2", "Chest", "Neck1", "Neck2", "Head", "HeadEnd"]
+# Bone chains used for the stature estimate. Both are sums of OFFSET magnitudes, which are
+# rest-pose bone lengths and therefore independent of what the performer is doing.
+_SPINE_CHAIN = ["Spine1", "Spine2", "Chest", "Neck1", "Neck2", "Head", "HeadEnd"]
+_LEG_CHAIN = ["LeftShin", "LeftFoot"]  # femur (hip->knee) and tibia (knee->ankle)
+
+# Stature divided by (spine chain + leg chain). The chains omit the ankle-to-sole height
+# and the small Hips-to-hip-joint rise, so the sum understates stature by a fixed factor.
+#
+# Calibrated against soma-retargeter's soma_zero_frame0.bvh, the authoritative rest pose,
+# where FK puts the feet at exactly z = 0.000000: stature (HeadEnd) = 1.768537 m against a
+# chain total of 162.3761 cm.
+#
+# Because this is a ratio over bone lengths it also scales correctly for the
+# soma_proportional variant, where per-actor bone lengths differ.
+_STATURE_PER_CHAIN_M = 1.089161
 
 _ROT_CHANNELS = {"Xrotation", "Yrotation", "Zrotation"}
 _POS_CHANNELS = {"Xposition", "Yposition", "Zposition"}
@@ -322,31 +335,30 @@ def to_world_frame(positions_cm: np.ndarray) -> np.ndarray:
 
 
 def estimate_height(skel: BvhSkeleton) -> float:
-    """Estimate the performer's stature in meters, independent of pose.
+    """Estimate the performer's stature in meters from bone lengths alone.
 
-    ``Hips.offset`` is the rest translation of the pelvis above a ground plane on which
-    the rest-pose feet sit (verified: min Y over all joints of ``soma_zero_frame0.bvh``
-    is exactly 0.0), so its Y component is the hip height. Adding the summed bone lengths
-    of the Hips -> HeadEnd chain gives stature without depending on the clip's pose --
-    which matters because a clip may begin mid-crouch or mid-air.
+    Uses only ``OFFSET`` magnitudes along the leg and spine chains, so the result depends
+    on the skeleton's proportions and not at all on what the clip is doing. That matters
+    more than it first appears.
 
-    Falls back to the longest available prefix of the chain if the skull-tip joints are
-    absent from a given file.
+    An earlier version of this function took ``Hips.offset[1]`` to be the hip height,
+    reasoning that the rest-pose feet sit on z = 0. That holds for standing takes but is
+    wrong in general: ``Hips.offset`` encodes the clip's *starting* root placement. In
+    BONES-SEED's ``sit_on_heels_*`` takes it is (0.27, 29.30, -12.08) -- a seated root --
+    versus (0.00, 101.28, 0.00) for a standing take, while every bone length in the two
+    files is identical to three decimals. That produced a 1.06 m stature and a spurious
+    100x-style scale error on 327 of 11001 clips. Bone lengths avoid the whole problem.
     """
-    try:
-        hips = skel.index("Hips")
-    except ValueError as exc:
-        raise ValueError("SOMA BVH is missing the 'Hips' joint") from exc
+    missing = [n for n in ("Hips", *_LEG_CHAIN) if n not in skel.names]
+    if missing:
+        raise ValueError(f"SOMA BVH is missing joints required for stature: {missing}")
 
-    hip_height_cm = float(skel.offsets[hips, 1])
+    chain_cm = 0.0
+    for name in (*_SPINE_CHAIN, *_LEG_CHAIN):
+        if name in skel.names:
+            chain_cm += float(np.linalg.norm(skel.offsets[skel.index(name)]))
 
-    spine_cm = 0.0
-    for name in _STATURE_CHAIN:
-        if name not in skel.names:
-            break
-        spine_cm += float(np.linalg.norm(skel.offsets[skel.index(name)]))
-
-    return (hip_height_cm + spine_cm) * CM_TO_M
+    return chain_cm * CM_TO_M * _STATURE_PER_CHAIN_M
 
 
 def resample(positions: np.ndarray, source_fps: float, target_fps: float) -> np.ndarray:
