@@ -372,13 +372,16 @@ class RetargetingEvaluator:
 
         return 1 - np.sum(worst_miss_contact) / len(q_trajectory)
 
-    def detect_foot_sliding(self, q_trajectory, contact_sequences):
+    def detect_foot_sliding(self, q_trajectory, contact_sequences, toe_names=None):
         """
         Detect foot sliding during contact phases.
 
         Args:
             q_trajectory: Robot joint configurations (N, DOF)
             contact_sequences: Contact information per frame
+            toe_names: Human toe joint names keying contact_sequences. Defaults to the
+                data format's TOE_NAMES. Must match the names the contact sequences were
+                built with, which is why callers pass theirs explicitly.
 
         Returns:
             dict: Foot sliding metrics
@@ -401,8 +404,15 @@ class RetargetingEvaluator:
         left_toe_xy_velocities = np.concatenate([[0], left_toe_xy_velocities])
         right_toe_xy_velocities = np.concatenate([[0], right_toe_xy_velocities])
 
-        left_foot_sticking_sequence = np.array([contact_sequence["L_Toe"] for contact_sequence in contact_sequences])
-        right_foot_sticking_sequence = np.array([contact_sequence["R_Toe"] for contact_sequence in contact_sequences])
+        if toe_names is None:
+            toe_names = getattr(self.constants, "TOE_NAMES", ["L_Toe", "R_Toe"])
+        left_toe_name, right_toe_name = toe_names
+        left_foot_sticking_sequence = np.array(
+            [contact_sequence[left_toe_name] for contact_sequence in contact_sequences]
+        )
+        right_foot_sticking_sequence = np.array(
+            [contact_sequence[right_toe_name] for contact_sequence in contact_sequences]
+        )
 
         left_foot_sliding_sequence = left_foot_sticking_sequence & (left_toe_xy_velocities > self.sliding_threshold)
         right_foot_sliding_sequence = right_foot_sticking_sequence & (right_toe_xy_velocities > self.sliding_threshold)
@@ -445,7 +455,7 @@ class RetargetingEvaluator:
         human_joints, object_poses = load_intermimic_data(f"{input_data_dir}/{task_name}.pt")
         contact_sequences = extract_foot_sticking_sequence_velocity(human_joints, self.demo_joints, ["L_Toe", "R_Toe"])
         sliding_duration, max_toe_sliding_velocities = self.detect_foot_sliding(
-            q_retarget, contact_sequences[: q_retarget.shape[0]]
+            q_retarget, contact_sequences[: q_retarget.shape[0]], ["L_Toe", "R_Toe"]
         )
 
         contact_results = self.evaluate_contact_precision(human_joints, object_poses, q_retarget)
@@ -550,7 +560,7 @@ class RetargetingEvaluator:
             human_joints, self.demo_joints, ["LeftToeBase", "RightToeBase"]
         )
         sliding_duration, max_toe_sliding_velocities = self.detect_foot_sliding(
-            q_retarget, contact_sequences[: q_retarget.shape[0]]
+            q_retarget, contact_sequences[: q_retarget.shape[0]], ["LeftToeBase", "RightToeBase"]
         )
 
         contact_results = self.evaluate_terrain_contact_precision(human_joints, q_retarget)
@@ -589,6 +599,7 @@ class RetargetingEvaluator:
         data_name = task_name.split("_original")[0]
         npy_path = Path(input_data_dir) / f"{data_name}.npy"
         pt_path = Path(input_data_dir) / f"{data_name}.pt"
+        npz_path = Path(input_data_dir) / f"{data_name}.npz"
 
         # Determine data format and toe names based on file extension
         if pt_path.exists():
@@ -620,8 +631,19 @@ class RetargetingEvaluator:
 
             human_joints = preprocess_motion_data(human_joints, self, toe_names, smpl_scale)
             demo_joints_for_contact = self.demo_joints
+        elif npz_path.exists():
+            # Generic .npz format: global_joint_positions + height. Covers "soma" and
+            # "smplx", and matches the fallback branch of robot_retarget.load_motion_data.
+            # Without this branch any .npz format raises FileNotFoundError below, so
+            # smplx was previously unevaluable here too.
+            toe_names = self.constants.TOE_NAMES
+            human_data = np.load(str(npz_path))
+            human_joints = human_data["global_joint_positions"]
+            smpl_scale = self.constants.ROBOT_HEIGHT / float(human_data["height"])
+            human_joints = preprocess_motion_data(human_joints, self, toe_names, smpl_scale)
+            demo_joints_for_contact = self.demo_joints
         else:
-            raise FileNotFoundError(f"Neither {npy_path} nor {pt_path} found for task {data_name}")
+            raise FileNotFoundError(f"None of {npy_path}, {pt_path}, {npz_path} found for task {data_name}")
 
         contact_sequences = extract_foot_sticking_sequence_velocity(
             human_joints,
@@ -629,7 +651,7 @@ class RetargetingEvaluator:
             toe_names,
         )
         sliding_duration, max_toe_sliding_velocities = self.detect_foot_sliding(
-            q_retarget, contact_sequences[: q_retarget.shape[0]]
+            q_retarget, contact_sequences[: q_retarget.shape[0]], toe_names
         )
 
         opt_cost = rt_res_data["cost"]
