@@ -54,6 +54,7 @@ class ClipMetrics:
     joint_sat_frac: float
     joint_sat_worst: str
     self_collide_min_m: float
+    self_collide_pair: str
     base_z_min: float
     base_z_max: float
 
@@ -89,6 +90,7 @@ def analyze_clip(path: Path, model, data, toe_bodies: list[str], contact_bodies:
     contact_z = np.zeros((n, len(contact_ids)))
     qpos_dof = np.zeros((n, model.nq))
     min_pair_dist = np.inf
+    worst_pair = "-"
 
     for i in range(n):
         data.qpos[:] = q[i, : model.nq]
@@ -105,10 +107,20 @@ def analyze_clip(path: Path, model, data, toe_bodies: list[str], contact_bodies:
             b2 = model.geom_bodyid[con.geom2]
             if b1 == b2:
                 continue
+            # Body 0 is `world`. Foot-vs-ground contacts are the *intended* behaviour, and
+            # counting them here made every clip look like it had ~1 mm of self-collision
+            # (the solver's contact tolerance) and buried the real interpenetrations.
+            if b1 == 0 or b2 == 0:
+                continue
             # Ignore geoms whose bodies are directly connected by a joint.
             if model.body_parentid[b1] == b2 or model.body_parentid[b2] == b1:
                 continue
-            min_pair_dist = min(min_pair_dist, float(con.dist))
+            dist = float(con.dist)
+            if dist < min_pair_dist:
+                min_pair_dist = dist
+                n1 = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, b1) or str(b1)
+                n2 = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, b2) or str(b2)
+                worst_pair = f"{n1}<->{n2}"
 
     # --- foot sliding -------------------------------------------------------
     toe_xy_speed = np.linalg.norm(np.diff(toe_xyz[:, :, :2], axis=0), axis=-1) / dt
@@ -161,6 +173,7 @@ def analyze_clip(path: Path, model, data, toe_bodies: list[str], contact_bodies:
         joint_sat_frac=joint_sat_frac,
         joint_sat_worst=worst_name,
         self_collide_min_m=float(min_pair_dist) if np.isfinite(min_pair_dist) else float("nan"),
+        self_collide_pair=worst_pair,
         base_z_min=float(q[:, 2].min()),
         base_z_max=float(q[:, 2].max()),
     )
@@ -238,6 +251,15 @@ def main() -> None:
     print("\n  most joint-limit-saturated clips:")
     for r in sat:
         print(f"    {r.joint_sat_frac:6.1%}  {r.joint_sat_worst:28s} {r.clip_id}")
+
+    from collections import Counter
+
+    pair_counts = Counter(r.self_collide_pair for r in rows if r.self_collide_pair != "-")
+    if pair_counts:
+        print("\n  most frequent self-penetrating body pairs (worst pair per clip):")
+        for pair, count in pair_counts.most_common(8):
+            depths = [r.self_collide_min_m for r in rows if r.self_collide_pair == pair]
+            print(f"    {count:4d} clip(s)  deepest {min(depths):+.4f} m  {pair}")
 
     if args.json:
         Path(args.json).write_text(json.dumps([r.__dict__ for r in rows], indent=2))
