@@ -393,20 +393,27 @@ def _compute_q_init_base(
     Returns:
         q_init_base in MuJoCo order: [0:3] position, [3:7] quaternion, [7:] joints
     """
+    # Initial actuated-joint angles. Historically all zeros; a robot may override selected
+    # joints via RobotConfig.Q_INIT_SEED to avoid seeding the solve on a kinematic
+    # singularity. See that property's docstring for the R1 knee case.
+    joint_seed = np.zeros(constants.ROBOT_DOF)
+    for idx, angle in getattr(constants, "Q_INIT_SEED", {}).items():
+        joint_seed[int(idx)] = angle
+
     if task_type == "robot_only":
         if data_format == "lafan":
             spine_joint_idx = constants.DEMO_JOINTS.index("Spine1")
             human_quat_init = estimate_human_orientation(human_joints, constants.DEMO_JOINTS)
             # MuJoCo order: pos first, then quat
             q_init_base = np.concatenate(
-                [human_joints[0, spine_joint_idx, :3], human_quat_init, np.zeros(constants.ROBOT_DOF)]
+                [human_joints[0, spine_joint_idx, :3], human_quat_init, joint_seed]
             )
         else:  # smplh
             _, human_quat_init = transform_from_human_to_world(
                 human_joints[0, 0, :], object_poses[0], np.array([0.0, 0.0, 0.0])
             )
             # MuJoCo order: pos first, then quat
-            q_init_base = np.concatenate([human_joints[0, 0, :3], human_quat_init, np.zeros(constants.ROBOT_DOF)])
+            q_init_base = np.concatenate([human_joints[0, 0, :3], human_quat_init, joint_seed])
     elif task_type == "object_interaction":
         _, human_quat_init = transform_from_human_to_world(
             human_joints[0, 0, :], object_poses[0], np.array([0.0, 0.0, 0.0])

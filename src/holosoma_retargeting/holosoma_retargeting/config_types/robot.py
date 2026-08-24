@@ -80,6 +80,7 @@ class RobotConfig:
     manual_lb: dict[str, float] | None = None
     manual_ub: dict[str, float] | None = None
     manual_cost: dict[str, float] | None = None
+    q_init_seed: dict[str, float] | None = None
 
     # Nominal tracking indices
     nominal_tracking_indices: np.ndarray | None = None
@@ -241,6 +242,34 @@ class RobotConfig:
         return {}
 
     MANUAL_COST = property(_manual_cost, doc="Get manual cost weights.")
+
+    def _q_init_seed(self) -> dict[str, float]:
+        """Initial joint angles for q_init, keyed by ACTUATED joint index (0-based).
+
+        Joints absent from this dict are seeded at 0, which is the historical behaviour.
+
+        Why this exists: _compute_q_init_base seeds every joint at zero, and for a knee that
+        lands on the wrong side of a kinematic singularity. R1's leg reaches its maximum
+        hip-to-ankle extension at knee = +7 deg, not 0, so from a zero seed the local
+        gradient tells the solver that shortening the leg requires *decreasing* the knee
+        angle. It drives the knee to the -10 deg hyperextension stop and is then trapped:
+        escaping needs the leg to lengthen temporarily, which the trust-region SQP will not
+        do. Measured on BONES-SEED crouch clips, the knee sat at exactly -10.0 deg for 100%
+        of frames -- a locked-straight leg in a crouch, with 22 cm of knee tracking error.
+
+        Seeding the knees flexed starts the solve on the flexion side of that maximum. Unlike
+        raising the knee's lower bound, it leaves full extension available, so clips that
+        genuinely need a straight leg are unaffected.
+        """
+        if self.q_init_seed is not None:
+            return self.q_init_seed
+
+        if self.robot_type == "r1":
+            # actuated indices 3 and 9 are left_knee_joint and right_knee_joint
+            return {"3": 0.6, "9": 0.6}
+        return {}
+
+    Q_INIT_SEED = property(_q_init_seed, doc="Initial joint angles for q_init, by actuated index.")
 
     def _nominal_tracking_indices(self) -> np.ndarray:
         """Get nominal tracking indices."""
