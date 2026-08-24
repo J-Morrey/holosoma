@@ -40,6 +40,21 @@ SAT_MARGIN_FRAC = 0.02
 # RetargetingEvaluator.sliding_threshold.
 SLIDING_THRESHOLD_MPS = 0.01
 
+# Joints counted by the `leg_pin` metric: the load-bearing chain plus the waist.
+#
+# ankle_roll is deliberately EXCLUDED. Its range is only +/-15 deg on R1, so a
+# SAT_MARGIN_FRAC of 0.02 is a 0.6 deg detection band, and it registers as saturated in
+# ~33% of frames of ordinary standing clips simply because the solver clamps foot roll
+# against a flat floor. Including it swamps the aggregate with a benign baseline and is
+# the main reason plain `joint_sat_frac` fails to separate good clips from broken ones.
+LEG_WAIST_PATTERNS = ("hip_pitch", "hip_roll", "hip_yaw", "knee", "ankle_pitch", "waist")
+KNEE_PATTERNS = ("knee",)
+
+# A joint held within the margin of ONE bound for at least this fraction of frames is
+# "pinned". Single-bound rather than either-bound: a joint oscillating between its stops
+# is a different and less damaging phenomenon than one parked in a corner for a whole clip.
+PIN_FRAC_REPORT_THRESHOLD = 0.25
+
 
 @dataclass
 class ClipMetrics:
@@ -53,6 +68,14 @@ class ClipMetrics:
     ground_pen_frac: float
     joint_sat_frac: float
     joint_sat_worst: str
+    leg_pin_frac: float
+    leg_pin_joint: str
+    leg_pin_side: str
+    knee_extension_frac: float
+    joint_sat_by_name: dict
+    track_err_mean_m: float
+    track_err_p95_m: float
+    track_err_by_keypoint: dict
     self_collide_min_m: float
     self_collide_pair: str
     base_z_min: float
@@ -69,7 +92,22 @@ def _link_ids(model, names: list[str]) -> list[int]:
     return out
 
 
-def analyze_clip(path: Path, model, data, toe_bodies: list[str], contact_bodies: list[str], fps_default: float) -> ClipMetrics | None:
+def analyze_clip(
+    path: Path,
+    model,
+    data,
+    toe_bodies: list[str],
+    contact_bodies: list[str],
+    fps_default: float,
+    track_pairs: list[tuple[str, int, int]] | None = None,
+) -> ClipMetrics | None:
+    """Analyze one saved retargeting result.
+
+    track_pairs: (human_joint_name, human_joint_index, robot_body_id) triples used to
+        measure keypoint tracking error. The saved npz stores `human_joints` already
+        scaled to robot size, so they are directly comparable to robot link world
+        positions and the error is computable offline with no re-run.
+    """
     try:
         d = np.load(path, allow_pickle=True)
         q = d["qpos"]
@@ -77,6 +115,8 @@ def analyze_clip(path: Path, model, data, toe_bodies: list[str], contact_bodies:
         return None
     if q.ndim != 2 or q.shape[0] < 2:
         return None
+
+    human = d["human_joints"] if "human_joints" in d.files else None
 
     fps = float(d["fps"]) if "fps" in d.files else fps_default
     dt = 1.0 / fps
@@ -92,10 +132,16 @@ def analyze_clip(path: Path, model, data, toe_bodies: list[str], contact_bodies:
     min_pair_dist = np.inf
     worst_pair = "-"
 
+    use_track = bool(track_pairs) and human is not None and human.shape[0] >= n
+    track_xyz = np.zeros((n, len(track_pairs or []), 3))
+
     for i in range(n):
         data.qpos[:] = q[i, : model.nq]
         mujoco.mj_forward(model, data)
         qpos_dof[i] = data.qpos
+        if use_track:
+            for k, (_, _, body_id) in enumerate(track_pairs):
+                track_xyz[i, k] = data.xpos[body_id]
         for k, bid in enumerate(toe_ids):
             toe_xyz[i, k] = data.xpos[bid]
         for k, bid in enumerate(contact_ids):
@@ -139,11 +185,26 @@ def analyze_clip(path: Path, model, data, toe_bodies: list[str], contact_bodies:
     ground_pen_frac = float(np.mean(lowest < -0.005))
 
     # --- joint-limit saturation --------------------------------------------
+    # Two different measurements share this loop:
+    #
+    #   joint_sat_frac  - the original either-bound average over all limited joints. Kept
+    #                     for continuity with earlier runs, but see LEG_WAIST_PATTERNS: it
+    #                     is dominated by benign ankle_roll clamping and does not separate
+    #                     a good clip from a degenerate solve.
+    #   leg_pin_frac    - the fraction of frames the worst load-bearing joint spends parked
+    #                     against a SINGLE bound. This is the discriminating statistic: a
+    #                     joint in a corner for a whole clip is a failed solve, whereas
+    #                     brief limit-grazing is normal and harmless.
     lo = model.jnt_range[:, 0].copy()
     hi = model.jnt_range[:, 1].copy()
     limited = model.jnt_limited.astype(bool)
     sat_counts = np.zeros(model.njnt)
     total = 0
+
+    sat_by_name: dict[str, float] = {}
+    leg_pin_frac, leg_pin_joint, leg_pin_side = 0.0, "-", "-"
+    knee_extension_frac = 0.0
+
     for j in range(model.njnt):
         if not limited[j]:
             continue
@@ -153,13 +214,47 @@ def analyze_clip(path: Path, model, data, toe_bodies: list[str], contact_bodies:
             continue
         margin = SAT_MARGIN_FRAC * rng
         vals = qpos_dof[:, adr]
-        sat_counts[j] = float(np.sum((vals <= lo[j] + margin) | (vals >= hi[j] - margin)))
+        at_lo = vals <= lo[j] + margin
+        at_hi = vals >= hi[j] - margin
+        sat_counts[j] = float(np.sum(at_lo | at_hi))
         total += n
+
+        name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, j) or str(j)
+        frac_lo, frac_hi = float(at_lo.mean()), float(at_hi.mean())
+        if max(frac_lo, frac_hi) > 0:
+            sat_by_name[name] = max(frac_lo, frac_hi)
+
+        if any(p in name for p in LEG_WAIST_PATTERNS):
+            worst_side_frac = max(frac_lo, frac_hi)
+            if worst_side_frac > leg_pin_frac:
+                leg_pin_frac = worst_side_frac
+                leg_pin_joint = name
+                leg_pin_side = "lo" if frac_lo >= frac_hi else "hi"
+
+        # Knee at its *extension* stop specifically. On R1 that is the -10 deg
+        # hyperextension limit, i.e. a locked-straight leg -- physically implausible for
+        # most labelled content and an unambiguous marker of a broken solve.
+        if any(p in name for p in KNEE_PATTERNS):
+            knee_extension_frac = max(knee_extension_frac, frac_lo)
+
     joint_sat_frac = float(sat_counts.sum() / total) if total else 0.0
     worst_j = int(np.argmax(sat_counts))
     worst_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, worst_j) or "-"
     if sat_counts[worst_j] == 0:
         worst_name = "-"
+
+    # --- keypoint tracking error --------------------------------------------
+    # The measure that catches a "fix" which merely trades one artifact for a worse pose.
+    # Reported per keypoint as well as in aggregate, so that e.g. "the whole arm bowed
+    # outward" is distinguishable from "only the hand moved".
+    track_mean, track_p95 = float("nan"), float("nan")
+    track_by_kp: dict[str, float] = {}
+    if use_track:
+        errs = np.linalg.norm(track_xyz - human[:n, [hi_ for _, hi_, _ in track_pairs], :], axis=-1)
+        track_mean = float(errs.mean())
+        track_p95 = float(np.percentile(errs, 95))
+        for k, (hname, _, _) in enumerate(track_pairs):
+            track_by_kp[hname] = float(errs[:, k].mean())
 
     return ClipMetrics(
         clip_id=path.stem,
@@ -172,6 +267,14 @@ def analyze_clip(path: Path, model, data, toe_bodies: list[str], contact_bodies:
         ground_pen_frac=ground_pen_frac,
         joint_sat_frac=joint_sat_frac,
         joint_sat_worst=worst_name,
+        leg_pin_frac=leg_pin_frac,
+        leg_pin_joint=leg_pin_joint,
+        leg_pin_side=leg_pin_side,
+        knee_extension_frac=knee_extension_frac,
+        joint_sat_by_name=sat_by_name,
+        track_err_mean_m=track_mean,
+        track_err_p95_m=track_p95,
+        track_err_by_keypoint=track_by_kp,
         self_collide_min_m=float(min_pair_dist) if np.isfinite(min_pair_dist) else float("nan"),
         self_collide_pair=worst_pair,
         base_z_min=float(q[:, 2].min()),
@@ -183,6 +286,7 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--results-dir", required=True)
     p.add_argument("--robot", default="r1")
+    p.add_argument("--data-format", default="soma", help="Used to resolve the keypoint mapping for tracking error")
     p.add_argument("--fps", type=float, default=30.0, help="Assumed fps if not stored in the npz")
     p.add_argument("--json", default=None, help="Write per-clip metrics here")
     p.add_argument("--limit", type=int, default=0)
@@ -205,6 +309,21 @@ def main() -> None:
     contact_bodies = list(rc.FOOT_STICKING_LINKS)
     toe_bodies = [b for b in contact_bodies if b.endswith("sphere_5_link")] or contact_bodies[:2]
 
+    # Build the (human joint, human index, robot body) triples for tracking error. Uses the
+    # same registry the retargeter itself consumes, so the measured pairs are exactly the
+    # ones the optimizer was asked to match.
+    track_pairs: list[tuple[str, int, int]] = []
+    try:
+        from holosoma_retargeting.config_types.data_type import DEMO_JOINTS_REGISTRY, JOINTS_MAPPINGS
+
+        demo_joints = DEMO_JOINTS_REGISTRY[args.data_format]
+        for hname, rlink in JOINTS_MAPPINGS[(args.data_format, args.robot)].items():
+            bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, rlink)
+            if bid >= 0 and hname in demo_joints:
+                track_pairs.append((hname, demo_joints.index(hname), bid))
+    except KeyError:
+        print(f"note: no ({args.data_format}, {args.robot}) mapping; skipping tracking error")
+
     files = sorted(Path(args.results_dir).glob("*.npz"))
     if args.limit:
         files = files[: args.limit]
@@ -213,7 +332,7 @@ def main() -> None:
 
     rows: list[ClipMetrics] = []
     for f in files:
-        m = analyze_clip(f, model, data, toe_bodies, contact_bodies, args.fps)
+        m = analyze_clip(f, model, data, toe_bodies, contact_bodies, args.fps, track_pairs)
         if m is None:
             print(f"  UNREADABLE {f.name}")
             continue
@@ -222,7 +341,9 @@ def main() -> None:
             print(
                 f"{m.clip_id[:44]:44s} f={m.frames:5d} cost={m.cost:7.4f} "
                 f"slide={m.foot_slide_frac:5.1%}/{m.foot_slide_p95_mps:5.3f}mps "
-                f"pen={m.ground_pen_max_m:6.4f}m sat={m.joint_sat_frac:5.1%} ({m.joint_sat_worst})"
+                f"pen={m.ground_pen_max_m:6.4f}m sat={m.joint_sat_frac:5.1%} "
+                f"pin={m.leg_pin_frac:5.1%}({m.leg_pin_joint}/{m.leg_pin_side}) "
+                f"track={m.track_err_mean_m:5.3f}m"
             )
 
     if not rows:
@@ -242,6 +363,10 @@ def main() -> None:
         "ground_pen_max_m",
         "ground_pen_frac",
         "joint_sat_frac",
+        "leg_pin_frac",
+        "knee_extension_frac",
+        "track_err_mean_m",
+        "track_err_p95_m",
         "self_collide_min_m",
     ):
         mean, p95 = agg(attr)
