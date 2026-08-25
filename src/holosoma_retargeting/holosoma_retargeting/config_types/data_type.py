@@ -287,8 +287,14 @@ JOINTS_MAPPINGS = {
         "RightFoot": "right_ankle_pitch_link",
         "LeftToeBase": "left_ankle_roll_sphere_5_link",
         "RightToeBase": "right_ankle_roll_sphere_5_link",
-        "LeftHand": "left_wrist_roll_link",
-        "RightHand": "right_wrist_roll_link",
+        # Targets the hand frame added to models/r1/r1_26dof.xml, not wrist_roll_link.
+        # wrist_roll_link's ORIGIN is at the wrist while its collision mesh extends ~8 cm
+        # further out, so matching the origin to the human's hand keypoint left the hand
+        # geometry displaced by that amount -- into the hip in 59% of clips, up to 8.2 cm
+        # deep. left_hand_link sits at the link's inertial COM and mirrors what the tested
+        # ("lafan", "g1") mapping already does with G1's left_rubber_hand_link.
+        "LeftHand": "left_hand_link",
+        "RightHand": "right_hand_link",
     },
     # Provided so the same SOMA clip can be retargeted to G1 as a control, separating
     # loader bugs from R1-vs-G1 embodiment limits. Mirrors ("lafan", "g1").

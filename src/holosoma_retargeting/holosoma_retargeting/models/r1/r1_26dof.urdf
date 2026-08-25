@@ -926,6 +926,22 @@
     <axis xyz="1 0 0"/>
     <limit lower="-1.9199" upper="1.9199" effort="33" velocity="33.4"/>
   </joint>
+  <!-- Retargeting keypoint frame at the centre of the hand; see the matching comment in
+       r1_26dof.xml. Kept in sync with the MuJoCo model because the retargeter solves
+       against the XML while viser renders the URDF. Massless fixed frame: no inertia,
+       no visual and no collision, so it adds no DOF and no dynamics. -->
+  <link name="left_hand_link"/>
+  <joint name="left_hand_joint" type="fixed">
+    <origin xyz="0.068045 -0.001688 0.001392" rpy="0 0 0"/>
+    <parent link="left_wrist_roll_link"/>
+    <child link="left_hand_link"/>
+  </joint>
+  <link name="right_hand_link"/>
+  <joint name="right_hand_joint" type="fixed">
+    <origin xyz="0.068045 0.001688 0.001392" rpy="0 0 0"/>
+    <parent link="right_wrist_roll_link"/>
+    <child link="right_hand_link"/>
+  </joint>
   <link name="right_shoulder_pitch_link">
     <inertial>
       <origin xyz="0.00294386 -0.04476868 -0.02286868" rpy="0 0 0"/>
