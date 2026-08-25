@@ -239,6 +239,28 @@ class RobotConfig:
 
         if self.robot_type == "g1":
             return {"19": 0.2, "20": 0.2}  # waist yaw, waist roll
+
+        if self.robot_type == "r1":
+            # Pin the arm's redundant DoFs. shoulder_yaw rotates the upper arm about its own
+            # long axis, which moves neither the elbow nor the wrist keypoint, so it sits in
+            # the exact null space of a position-only objective: nothing acts on it and it
+            # drifts to arbitrary values. Measured on BONES-SEED, it reached its +/-110 deg
+            # stop during ordinary walking and wandered 47 deg between two runs that differed
+            # only in an unrelated leg setting. It also silently absorbs corrections -- a 4 cm
+            # outward offset applied to the hand keypoint produced -6% of the commanded
+            # displacement because the shoulder simply rotated 36 deg instead.
+            #
+            # wrist_roll is the same class of DoF and is even more degenerate: rotating it
+            # does not move the wrist link's origin at all, so it was measured at exactly
+            # 0.000 with zero variance in every clip. Pinned here so it stays that way.
+            #
+            # GMR handles this with an explicit orientation task on *_shoulder_yaw_link
+            # (position_cost 0, orientation_cost 10). This solver matches positions only and
+            # has no orientation residual, so we use the other standard idiom -- an elevated
+            # rest cost on the redundant joints, as in PyRoki's G1 example (base 0.2, 2.0 on
+            # yaw joints) and ProtoMotions (base 0.02, 1.0 on roll/pitch wrists).
+            return {"23": 0.2, "28": 0.2, "25": 0.05, "30": 0.05}
+
         return {}
 
     MANUAL_COST = property(_manual_cost, doc="Get manual cost weights.")
