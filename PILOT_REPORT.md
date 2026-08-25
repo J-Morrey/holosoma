@@ -1,6 +1,6 @@
 # SOMA → OmniRetarget → Unitree R1 pilot report
 
-**Date:** 2026-08-21 / 2026-08-22
+**Date:** 2026-08-21 → 2026-08-25
 **Branch:** `add_soma_format` (off `add_R1`)
 **Scope:** add a `soma` motion format to the retargeting pipeline and pilot-retarget a
 stratified 10% sample of BONES-SEED to the Unitree R1.
@@ -14,19 +14,26 @@ standard of evidence, and conversion of the full 10% sample succeeded on **14,22
 clips with zero failures**. Retargeting itself has a **0% exception rate** across every clip
 attempted.
 
-There are **two real quality defects**:
+> **⚠ Sections 3, 5 and 8 below record the state at first writing. Two of their central
+> diagnoses were subsequently disproved by measurement, and one defect has since been
+> fixed. Read [§11 Corrections](#11-corrections-what-later-measurement-disproved) first —
+> it supersedes them.**
 
-1. **R1 drives its own hands into its hips** in ~50% of clips, up to 7.6 cm deep. Not a
-   loader bug, and not fixable with the obvious knob — enabling the self-collision
-   constraint makes the QP *infeasible* even at a 5 mm margin.
-2. **Crouching motion is at or beyond R1's hip-roll range.** `crouching` clips average
-   13.0% joint-limit saturation with **53% exceeding a 10% flag threshold**, against 3.7%
-   and 2% for `standing`. This is the concrete filter list for a full run.
+There were **two real quality defects**. One is now fixed:
+
+1. **Crouching produced degenerate solves — FIXED.** Originally diagnosed here as R1
+   lacking hip-roll range. That was wrong: it was a kinematic singularity in the
+   initialisation. See §11.
+2. **R1 drives its own hands into its hips** — unresolved, and now believed to be a
+   genuine embodiment limit rather than a tunable defect. Six candidate fixes were tested
+   and falsified; see §11.
 
 The full 142K run projects to **~8–10 days** on this 24-core box. Not weeks, but not
 overnight either, and worth parallelising across machines.
 
-**Recommendation: fix the wrist/hip issue, then proceed.** Everything else is ready.
+**Recommendation: proceed.** The crouch defect is fixed and validated. The hand/hip
+penetration is now believed to be an embodiment limit that no comparable pipeline solves
+either; see §11.5 for the evidence and the one remaining option.
 
 ---
 
@@ -233,7 +240,7 @@ penetration, plainly visible), and the source head/shoulder keypoints sit consis
 *Retargeted R1, throwing* (`Relaxed_throw_ball_003__A057`, the worst penetration case):
 revealing. The penetration occurs in the **arms-at-rest** frames, not during the throw —
 the raised-arm frames are clear. So the failure mode is the neutral arms-down pose: a
-human's hands hang naturally beside the hips, and after scaling to R1's narrower torso
+human's hands hang naturally beside the hips, and after scaling to R1's torso
 those targets land inside the hip geometry. That is exactly why it affects ~90% of clips —
 nearly every clip has arms-down phases.
 
@@ -300,7 +307,8 @@ that deliberately rather than by default.
 | `standing` (body position) | 60 | 3.71% | 2% | fine |
 
 **1. Crouching is the clear headline.** It saturates `left_hip_roll_joint` at 20–27%. R1
-cannot achieve the hip abduction that a crouched human gait requires. Concrete IDs:
+**[SUPERSEDED — see §11.](#11-corrections-what-later-measurement-disproved) R1's hip-roll
+range is ample; this was a solver singularity, now fixed.]** Concrete IDs:
 
 - `crouch_ff_loop_225_R_002__A246_M` — **27.2%**, `left_hip_roll_joint`
 - `crouch_ff_start_180_R_103__A125_M` — 21.2%, `left_hip_roll_joint`
@@ -395,7 +403,8 @@ Cost is 2× the 30 fps figure (~16–20 days single-machine), which is the real 
      outside the hip volume. Cheapest and most likely to work.
    - Use `SelfCollisionConfig.windows` to enforce only on frames that actually violate,
      avoiding the global infeasibility.
-   - Convert self-collision from a hard constraint to a soft penalty.
+   - Convert self-collision from a hard constraint to a soft penalty. **[This is the one
+     remaining untested option, and the literature's answer — see §11.]**
    - Accept it and filter, but at ~90% of clips that is not viable.
 
 2. **Decide what to do about crouching** (§5). Either exclude
@@ -516,3 +525,155 @@ Flagged honestly; each is a real judgement call, not a certainty.
 8. **Clips > 60 s excluded** from the sample (corpus max is 21,617 frames = 180 s). A
    handful of very long takes would otherwise dominate pilot wall-clock without adding
    proportionate coverage. This drops ~4% of the corpus; revisit for the full run.
+
+---
+
+## 11. Corrections: what later measurement disproved
+
+Everything above §11 was written before a second round of investigation. That round
+overturned three claims and fixed one of the two defects. This section supersedes §3, §5
+and §8 wherever they disagree.
+
+### 11.1 Three claims from the original report that were wrong
+
+**(a) "Crouching is at or beyond R1's hip-roll range."** Wrong, and the check that
+disproved it was the same one that validated the loader — NVIDIA's shipped G1 retarget of
+the *same clips*. On the three worst crouch clips the G1 reference uses at most **±47°** of
+hip roll, where R1 allows −60…+100°. The range was never the constraint.
+
+**(b) "The Laplacian is a hard constraint fighting self-collision."** Wrong.
+`lap_var` (`interaction_mesh_retargeter.py:643`) is a *free* variable appearing only in a
+defining equality (line 649) and in the cost (line 728). The interaction-mesh term is
+**purely soft**. The self-collision infeasibility has a different cause.
+
+**(c) "R1's shoulder girdle is narrower than a human's."** Backwards. Measured against the
+scaled human target: R1's hips match to **+3.3%**, but its shoulders are **+28.3% wider**.
+R1 is proportionally *broader*-shouldered, which is why reaching the human's comparatively
+narrow hand targets drives its arms inboard into its own hips.
+
+### 11.2 Defect 1 — crouching: root cause found and FIXED
+
+Not a range limit but a **kinematic singularity in the initialisation**. R1's leg reaches
+maximum hip-to-ankle extension at knee = **+7°**, not 0°. Gradient of that distance:
+
+| knee angle | d(hip→ankle)/d(knee) |
+|---:|---:|
+| −10° | +0.000704 m/deg |
+| 0° (the seed) | +0.000309 m/deg |
+| **+7°** | **~0 ← maximum** |
+| +40° | −0.001261 m/deg |
+
+`_compute_q_init_base` seeded every joint at zero — on the *wrong side* of that maximum. The
+linearisation therefore reports that shortening the leg requires *decreasing* the knee
+angle, so the solver drives it to the −10° hyperextension stop and is trapped: escaping
+requires temporarily lengthening the leg to cross the +7° hump, which a trust-region SQP
+will not do.
+
+The result was not a shallow crouch but a **locked-straight leg**. On
+`crouch_ff_start_180_R_103__A125_M` the right knee sat at exactly −10.0° for **100% of 189
+frames** (min = max = mean) while the target hip→ankle distance varied 0.204–0.463 m.
+`LeftShin` carried **0.220 m** of tracking error against 0.024 m on a healthy clip.
+
+**Fix (`650edc8`):** seed the knees at 0.6 rad via a new `RobotConfig.Q_INIT_SEED`. Empty
+for every other robot, so G1 and T1 are unchanged. Validated on the 83-clip A/B set:
+
+| | degenerate (n=43) | healthy controls (n=40) |
+|---|---|---|
+| `knee_extension_frac` | 39.8% → **10.9%** | 0.27% → 0.03% |
+| `cost` | 0.894 → **0.683**, 86% improved | 0.210 → **0.153**, 98% improved |
+| keypoint tracking error | 0.0798 → **0.0617**, 86% improved | 0.0376 → **0.0315**, 98% improved |
+| gate crossings | **11 fixed, 0 broken** | 0 / 0 |
+
+A second fix landed alongside it (`c608338`): R1 has **no hand body**, unlike G1's
+`rubber_hand_link`, so the hand keypoint had to target `wrist_roll_link`, whose origin is at
+the wrist while its mesh extends ~8 cm further. Adding `left/right_hand_link` at the link's
+inertial COM more than halved cost on the walking clip. `nq` stays 33, mass and `ngeom`
+unchanged, so existing outputs remain compatible.
+
+### 11.3 Defect 2 — hands into hips: six hypotheses tested, all falsified
+
+| hypothesis | verdict |
+|---|---|
+| insufficient joint range | G1 reference uses ±47° where R1 allows −60…+100° |
+| leg segment ratio | failing clips are *inside* R1's reach (0.0% of frames over); a healthy clip exceeds it in 19.2% and tracks fine |
+| shoulder postural cost | 52% of clips improved — a coin flip |
+| hip keypoint offset | **0%** of commanded displacement — hip width is rigid, no joint can change it |
+| hand keypoint offset | **−6%** of commanded — absorbed by a 36° shoulder-yaw rotation |
+| per-limb scaling | actively harmful: 0 fixed, **6 newly broken** |
+| shoulder-yaw drift | fixed completely, penetration unmoved (57% ≈ chance) |
+
+Two structural findings explain why the whole offset family fails:
+
+**An offset frame is rigidly attached and rotates with its link.** Any free rotational DoF
+upstream will rotate to cancel it. That is measurable: a 4 cm hand offset moved the hand
+−0.0022 m while `shoulder_yaw` swung 36°.
+
+**The Laplacian cannot express a clearance constraint.** Its coordinate is
+`v_i − mean(all Delaunay neighbours)` — a differential coordinate against a whole
+neighbourhood, not a pairwise distance. `RightHand` has **10.7 neighbours** on average, so
+the hip contributes about a tenth. Shifting the hip vertex 15 cm asks the hand to move
+`0.15 / 10.7 = 1.4 cm`. Using a shape-similarity term to enforce a clearance constraint was
+the underlying error in every offset variant.
+
+### 11.4 Metric correction, and how R1 compares to published baselines
+
+The original "59% of clips" counted a clip if **any single frame** penetrated. The field
+convention (NMR) rejects only if **>5% of frames** do. Recomputed on 200 clips at a 5 mm
+threshold:
+
+| statistic | value |
+|---|---|
+| per-clip penetrating-frame fraction | mean **28.0%**, median 20.9% |
+| clips with any penetrating frame (old metric) | 86.0% |
+| clips over NMR's >5%-of-frames rule | **77.5%** |
+| ReActor-style penetration **time / depth** | **0.280 / 4.04 cm** |
+
+Against published G1 numbers: OmniRetarget **0.12 / 3.27 cm**, GMR **0.07 / 5.63 cm**. So
+R1's penetration *depth* is normal; its *frequency* is 2–4× the baselines.
+
+### 11.5 What the field actually does — and why this may not be worth fixing
+
+Verified in source, not marketing: **no mainstream G1 pipeline enforces self-collision
+during retargeting.** GMR has no mechanism at all (only `ConfigurationLimit` +
+`VelocityLimit`). NVIDIA ProtoMotions ships `self_collision_cost` **commented out** with
+`weight=0.0`. Unitree's own LAFAN1→G1 dataset documents kinematic constraints only and
+concedes "the robot cannot perfectly execute the retargeted trajectories."
+`soma-retargeter` does not mention self-collision. OmniRetarget's paper defers it to the RL
+reward stage by design: *"violations are minimal and can be efficiently fixed by RL."*
+
+On whether it matters downstream, the cleanest evidence is cuRoboV2 §7.5.2 — same pipeline,
+5 seeds, 2 B samples, only the IK solver varying:
+
+- On **running**, self-collision handling is worth **nothing** (MPJPE 139.6 vs 138.9 mm).
+- On **crawling**, reward and episode length look identical while MPJPE variance is **12×
+  higher** without it.
+- Their warning: *"All three [return, episode length, PSR] can appear healthy while the
+  policy tracks physically infeasible reference poses."*
+
+ReActor puts the total value of eliminating self-penetration on G1 at **~2 points** of
+downstream success (95.51% → 97.45%). And PyRoki, which *does* enable collision avoidance,
+scored best on constraints yet produced the **worst** policy of three — over-conservatism
+near contact is worse than the artifact.
+
+**Revised recommendation.** SEED is locomotion-dominated, so the expected payoff here is
+small. The one remaining untested option is a **soft self-collision penalty** — the only
+mechanism that states the constraint directly rather than approximating it through a
+shape-similarity term, and the only one that would also cover the wrist↔wrist and
+wrist↔knee modes. If pursued, measure **MPJPE across ≥5 seeds**; reward curves will not
+reveal whether it worked. Otherwise, proceed to the SONIC smoke test and treat the
+penetration as a documented limitation, which is what every comparable pipeline does.
+
+### 11.6 Also committed since the original report
+
+- **`ad35efd`** — rest cost pinning R1's redundant arm DoFs. `shoulder_yaw` sits in the
+  exact null space of a position-only objective; it reached its ±110° stop during ordinary
+  walking and wandered **47°** between two runs differing only in an unrelated leg setting.
+  After: mean magnitude 31.1° → **7.1°**, saturation 2.29% → **0.00%** of frames, for
+  +1.8 mm tracking error and nothing broken. Taken for reproducibility, not penetration.
+- **`04217d4`** — `leg_pin_frac` / `knee_extension_frac` / per-keypoint tracking error in
+  the analyzer. Plain `joint_sat_frac` does not separate a good clip from a degenerate
+  solve: it is dominated by `ankle_roll`, whose ±15° range makes the 2% margin a 0.6° band
+  that trips in ~33% of frames of ordinary standing clips.
+- **`0bf0f6f`** — pinned-joint highlighting, before/after compare and GIF output in the
+  renderer. Rendering with limit-violating joints in red is what turned "high saturation"
+  into "that leg never moves."
