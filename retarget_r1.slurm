@@ -1,6 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=r1-retarget
 #SBATCH --nodes=1 --ntasks=1 --cpus-per-task=32
+#SBATCH --nodelist=zac
 #SBATCH --time=14-00:00:00
 #SBATCH --output=logs/retarget-%j.out
 
