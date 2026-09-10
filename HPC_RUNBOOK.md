@@ -73,7 +73,7 @@ tar xzf /path/to/soma_uniform.tar.gz -C $DATA
 # BVH -> human-keypoint npz, 30 fps. Fast: ~12 min for 14k clips at 20 workers
 python data_utils/prep_soma_bvh_for_rt.py \
     --input-dir $DATA/soma_uniform/bvh \
-    --output-dir $DATA/npz --target-fps 30 --workers 64
+    --output-dir $DATA/npz --target-fps 60 --workers 28
 ```
 
 Omit `--clip-list` to convert the whole corpus. Conversion had a **0% failure rate** on the
