@@ -5,7 +5,7 @@
 #SBATCH --time=14-00:00:00
 #SBATCH --output=logs/retarget-%j.out
 
-source ~/miniconda3/etc/profile.d/conda.sh && conda activate hsretarget
+source /home/software/miniforge3/etc/profile.d/conda.sh && conda activate hsretarget
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1
 
 DATA=/scratch/$USER/seed
